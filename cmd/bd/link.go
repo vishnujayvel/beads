@@ -100,8 +100,8 @@ Examples:
 				"type":          depType,
 			})
 		}
-		fmt.Printf("%s Linked: %s depends on %s (%s)\n",
-			ui.RenderPass("✓"), formatFeedbackIDParen(fromID, lookupTitle(fromID)), formatFeedbackIDParen(toID, lookupTitle(toID)), depType)
+		fmt.Printf("%s Linked: %s %s %s (%s)\n",
+			ui.RenderPass("✓"), formatFeedbackIDParen(fromID, lookupTitle(fromID)), depRelationFor(dt).phrase, formatFeedbackIDParen(toID, lookupTitle(toID)), depType)
 		return nil
 	},
 }

@@ -60,9 +60,10 @@ func runLinkProxiedServer(cmd *cobra.Command, ctx context.Context, args []string
 			"type":          depType,
 		})
 	}
-	fmt.Printf("%s Linked: %s depends on %s (%s)\n",
+	fmt.Printf("%s Linked: %s %s %s (%s)\n",
 		ui.RenderPass("✓"),
 		formatFeedbackIDParen(id1, res.fromTitle),
+		depRelationFor(dt).phrase,
 		formatFeedbackIDParen(id2, res.toTitle),
 		depType)
 	return nil

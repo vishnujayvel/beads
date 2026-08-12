@@ -835,6 +835,50 @@ func TestCLI_DepAdd_TypeBlockedByAliasGates(t *testing.T) {
 	}
 }
 
+// TestCLI_Link_RelationPhrase is the regression test for GH#5542: `bd link`
+// always printed "depends on" regardless of --type, even though #5529 taught
+// `bd dep add` to use depRelationFor(dt).phrase. Default blocks stays pinned
+// to "depends on"; a non-blocks type must not claim a blocking relation.
+func TestCLI_Link_RelationPhrase(t *testing.T) {
+	// Note: Not using t.Parallel() because inProcessMutex serializes execution anyway
+	tmpDir := setupCLITestDB(t)
+
+	out1 := runBDInProcess(t, tmpDir, "create", "From", "-p", "1", "--json")
+	out2 := runBDInProcess(t, tmpDir, "create", "To", "-p", "1", "--json")
+
+	var issue1, issue2 map[string]interface{}
+	json.Unmarshal([]byte(out1), &issue1)
+	json.Unmarshal([]byte(out2), &issue2)
+
+	id1 := issue1["id"].(string)
+	id2 := issue2["id"].(string)
+
+	related := runBDInProcess(t, tmpDir, "link", id1, id2, "--type", "related")
+	if !strings.Contains(related, "Linked") {
+		t.Fatalf("expected Linked confirmation, got: %s", related)
+	}
+	if !strings.Contains(related, "is related to") {
+		t.Errorf("related link must use relation phrase, got: %s", related)
+	}
+	if strings.Contains(related, "depends on") {
+		t.Errorf("related link must not claim depends on, got: %s", related)
+	}
+
+	// Fresh pair so the default blocks path is independent of the related edge.
+	out3 := runBDInProcess(t, tmpDir, "create", "Blocked", "-p", "1", "--json")
+	out4 := runBDInProcess(t, tmpDir, "create", "Blocker", "-p", "1", "--json")
+	var issue3, issue4 map[string]interface{}
+	json.Unmarshal([]byte(out3), &issue3)
+	json.Unmarshal([]byte(out4), &issue4)
+	id3 := issue3["id"].(string)
+	id4 := issue4["id"].(string)
+
+	blocks := runBDInProcess(t, tmpDir, "link", id3, id4)
+	if !strings.Contains(blocks, "depends on") {
+		t.Errorf("default blocks link must still say depends on, got: %s", blocks)
+	}
+}
+
 // TestCLI_Show_SupersedesIsNotABlocker is the regression test for bd show
 // grouping every dependency type it did not name explicitly into the blocks
 // bucket. A supersedes edge printed under "DEPENDS ON" on the replaced issue

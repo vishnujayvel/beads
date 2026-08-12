@@ -41,6 +41,15 @@ func TestDepRelationFor_CustomTypeKeepsItsName(t *testing.T) {
 	}
 }
 
+// Without this, a new well-known type silently gets depRelationFor's raw-name fallback.
+func TestDepRelations_CoversWellKnownTypes(t *testing.T) {
+	for _, dt := range types.WellKnownDependencyTypes() {
+		if _, ok := depRelations[dt]; !ok {
+			t.Errorf("depRelations missing curated entry for well-known type %q", dt)
+		}
+	}
+}
+
 func TestGroupDepSections(t *testing.T) {
 	dep := func(id string, dt types.DependencyType) *types.IssueWithDependencyMetadata {
 		return &types.IssueWithDependencyMetadata{
