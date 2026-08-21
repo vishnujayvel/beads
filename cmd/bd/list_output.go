@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"text/template"
 
 	"github.com/steveyegge/beads/internal/types"
@@ -18,8 +19,18 @@ func printTruncationHint(truncated bool, effectiveLimit int) {
 	if !truncated || effectiveLimit <= 0 || !ui.IsStderrTerminal() {
 		return
 	}
-	msg := fmt.Sprintf("\nShowing %d issues; more results matched but were hidden by --limit. Use --limit 0 for all, or --limit N to raise the cap.\n", effectiveLimit)
-	fmt.Fprint(os.Stderr, ui.RenderWarn(msg))
+	fmt.Fprint(os.Stderr, formatTruncationHint(effectiveLimit))
+}
+
+func truncationHintText(effectiveLimit int) string {
+	return fmt.Sprintf("Showing %d issues; more results matched but were hidden by --limit. Use --limit 0 for all, or --limit N to raise the cap.", effectiveLimit)
+}
+
+// Newlines stay outside RenderWarn: lipgloss pads blank lines to terminal
+// width and drops the trailing newline (GH#5685).
+func formatTruncationHint(effectiveLimit int) string {
+	rendered := strings.TrimRight(ui.RenderWarn(truncationHintText(effectiveLimit)), " \t\r\n")
+	return "\n" + rendered + "\n"
 }
 
 func outputDotFormat(out io.Writer, issues []*types.Issue, depsByIssueID map[string][]*types.Dependency) error {

@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/steveyegge/beads/internal/types"
+	"github.com/steveyegge/beads/internal/ui"
 )
 
 func listOutputFixture() ([]*types.Issue, map[string][]*types.Dependency) {
@@ -165,5 +167,70 @@ func TestOutputFormattedListWithNoEdgesDoesNotWrite(t *testing.T) {
 	}
 	if writer.writes != 0 {
 		t.Fatalf("zero-edge output made %d writes, want 0", writer.writes)
+	}
+}
+
+func TestFormatTruncationHintExactBytes(t *testing.T) {
+	t.Parallel()
+
+	got := formatTruncationHint(2)
+	plain := stripANSIForTest(got)
+	const want = "\nShowing 2 issues; more results matched but were hidden by --limit. Use --limit 0 for all, or --limit N to raise the cap.\n"
+	if plain != want {
+		t.Fatalf("truncation hint bytes differ\ngot:\n%q\nwant:\n%q", plain, want)
+	}
+	if !strings.HasSuffix(got, "\n") {
+		t.Fatal("truncation hint missing trailing newline")
+	}
+	if strings.HasSuffix(got, "\n\n") {
+		t.Fatal("truncation hint ended with a double newline")
+	}
+	assertNoWhitespaceOnlyLine(t, plain)
+
+	got10 := stripANSIForTest(formatTruncationHint(10))
+	if !strings.Contains(got10, "Showing 10 issues;") {
+		t.Fatalf("limit interpolation missing: %q", got10)
+	}
+	if strings.HasPrefix(got10, "\n\n") {
+		t.Fatalf("leading double newline: %q", got10)
+	}
+}
+
+func TestFormatTruncationHintAvoidsLipglossNewlinePadding(t *testing.T) {
+	t.Parallel()
+
+	// Feeding surrounding newlines to RenderWarn is the GH#5685 defect:
+	// lipgloss pads those blank lines to terminal width and drops the
+	// trailing newline. formatTruncationHint must not emit that shape.
+	buggy := ui.RenderWarn("\n" + truncationHintText(2) + "\n")
+	got := formatTruncationHint(2)
+	assertNoWhitespaceOnlyLine(t, stripANSIForTest(got))
+	if whitespaceOnlyLine(stripANSIForTest(buggy)) && got == buggy {
+		t.Fatalf("formatTruncationHint still uses newline-inside-RenderWarn bytes:\n%q", got)
+	}
+	if !strings.HasSuffix(got, "\n") {
+		t.Fatalf("formatTruncationHint missing trailing newline: %q", got)
+	}
+}
+
+func stripANSIForTest(s string) string {
+	return regexp.MustCompile(`\x1b\[[0-9;]*m`).ReplaceAllString(s, "")
+}
+
+func whitespaceOnlyLine(s string) bool {
+	for _, line := range strings.Split(s, "\n") {
+		if line != "" && strings.TrimSpace(line) == "" {
+			return true
+		}
+	}
+	return false
+}
+
+func assertNoWhitespaceOnlyLine(t *testing.T, s string) {
+	t.Helper()
+	for i, line := range strings.Split(s, "\n") {
+		if line != "" && strings.TrimSpace(line) == "" {
+			t.Fatalf("whitespace-only line at index %d (len=%d): %q", i, len(line), line)
+		}
 	}
 }
