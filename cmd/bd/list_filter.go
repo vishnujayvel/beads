@@ -314,7 +314,14 @@ func buildListFilter(in listInput, cfg listFilterConfig) (types.IssueFilter, err
 		filter.HasMetadataKey = in.hasMetadataKey
 	}
 
-	if !in.includeInfra && (in.issueType == "" || !cfg.isInfra(in.issueType)) {
+	// The default hides the wisps table to keep unassigned pool-routing noise
+	// (unclaimed molecules/wisps) out of ordinary `bd list` output. That intent
+	// doesn't apply when the caller filters by --assignee: they're asking "what
+	// is assigned to X", and a wisp assigned to X is exactly the kind of durable
+	// answer they're after, not noise. Without this carve-out, `bd list
+	// --assignee=X` can never see X's own ephemeral wisps at all (GH#4547-style
+	// gap), forcing callers to shell out to `bd query` instead. See ocb-3txj.
+	if !in.includeInfra && in.assignee == "" && (in.issueType == "" || !cfg.isInfra(in.issueType)) {
 		filter.SkipWisps = true
 	}
 
