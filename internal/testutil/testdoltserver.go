@@ -3,7 +3,9 @@
 package testutil
 
 import (
+	"bufio"
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,6 +18,8 @@ import (
 	_ "github.com/go-sql-driver/mysql" // required by testcontainers Dolt module
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/dolt"
+
+	"github.com/steveyegge/beads/internal/storage/doltutil"
 )
 
 // doltServer represents a running test Dolt container instance.
@@ -33,6 +37,7 @@ var (
 	doltTestPort      string
 	doltSingletonSrv  *doltServer
 	doltTerminateOnce sync.Once
+	doltRestartMu     sync.Mutex
 	dockerOnce        sync.Once
 	dockerAvail       bool
 	doltCheckOnce     sync.Once
@@ -300,4 +305,119 @@ func DoltContainerCrashError() error {
 		return fmt.Errorf("Dolt container exited (status=%s, exit=%d)", state.Status, state.ExitCode)
 	}
 	return nil
+}
+
+// doltProbeAttempts and doltProbeBackoff bound DoltServerReachable's retries so
+// a transient stall on a loaded runner is not mistaken for a dead server.
+const (
+	doltProbeAttempts = 3
+	doltProbeBackoff  = 500 * time.Millisecond
+)
+
+// DoltServerReachable reports whether the shared Dolt container accepts a
+// fresh SQL connection, retrying briefly before answering false. A bare TCP
+// dial is not enough: a port forwarder can keep accepting connections while
+// every SQL session behind it is dropped, so it runs a real round trip.
+func DoltServerReachable() bool {
+	port := DoltContainerPortInt()
+	if port == 0 {
+		return false
+	}
+	for attempt := 0; attempt < doltProbeAttempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(doltProbeBackoff)
+		}
+		if pingDolt(port) {
+			return true
+		}
+	}
+	return false
+}
+
+func pingDolt(port int) bool {
+	dsn := doltutil.ServerDSN{Host: "127.0.0.1", Port: port, User: "root", Timeout: 3 * time.Second}.String()
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		return false
+	}
+	defer db.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var one int
+	return db.QueryRowContext(ctx, "SELECT 1").Scan(&one) == nil
+}
+
+// dumpDoltContainerDiagnostics writes the shared container's state and the tail
+// of its logs to stderr, so a replaced container leaves evidence of why it died.
+func dumpDoltContainerDiagnostics() {
+	if doltSingletonSrv == nil || doltSingletonSrv.container == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	ctr := doltSingletonSrv.container
+	if state, err := ctr.State(ctx); err == nil {
+		fmt.Fprintf(os.Stderr, "WARN: Dolt container state: status=%s running=%v exit=%d oomkilled=%v\n",
+			state.Status, state.Running, state.ExitCode, state.OOMKilled)
+	} else {
+		fmt.Fprintf(os.Stderr, "WARN: Dolt container state unavailable: %v\n", err)
+	}
+	rc, err := ctr.Logs(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: Dolt container logs unavailable: %v\n", err)
+		return
+	}
+	defer func() { _ = rc.Close() }()
+	const tail = 40
+	var lines []string
+	sc := bufio.NewScanner(rc)
+	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	for sc.Scan() {
+		lines = append(lines, sc.Text())
+		if len(lines) > tail {
+			lines = lines[1:]
+		}
+	}
+	fmt.Fprintf(os.Stderr, "WARN: last %d lines of Dolt container logs:\n", len(lines))
+	for _, l := range lines {
+		fmt.Fprintln(os.Stderr, "  | "+l)
+	}
+}
+
+// RestartDoltContainer replaces the shared Dolt container with a fresh one and
+// re-points BEADS_DOLT_PORT at it, first dumping the old container's state and
+// logs to stderr. Use it after DoltServerReachable reports false: the new
+// container is empty and listens on a new host port, so callers must re-read
+// DoltContainerPortInt and recreate any databases they had.
+//
+// It is meant for TestMain-style shared containers whose tests run serially;
+// it does not coordinate with concurrent readers of the container globals.
+func RestartDoltContainer() error {
+	if state := checkDolt(); state != doltReady {
+		return fmt.Errorf("%s", state)
+	}
+	doltRestartMu.Lock()
+	defer doltRestartMu.Unlock()
+
+	dumpDoltContainerDiagnostics()
+	if doltSingletonSrv != nil && doltSingletonSrv.container != nil {
+		_ = testcontainers.TerminateContainer(doltSingletonSrv.container)
+	}
+	doltSingletonSrv = nil
+	doltTestPort = ""
+	doltTerminateOnce = sync.Once{}
+
+	if err := startDoltContainer(); err != nil {
+		return err
+	}
+	return os.Setenv("BEADS_DOLT_PORT", doltTestPort)
+}
+
+// KillDoltContainer terminates the shared container out from under its users,
+// simulating a mid-suite server crash. For testing recovery paths only.
+func KillDoltContainer() error {
+	if doltSingletonSrv == nil || doltSingletonSrv.container == nil {
+		return fmt.Errorf("no shared Dolt container running")
+	}
+	return doltSingletonSrv.container.Terminate(context.Background())
 }

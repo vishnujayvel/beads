@@ -21,6 +21,7 @@ func newTestStore(t *testing.T) *dolt.DoltStore {
 	if testServerPort == 0 || testSharedDB == "" {
 		t.Skip("shared test Dolt database not initialized, skipping test")
 	}
+	requireHealthyTrackerDolt(t)
 	ctx := context.Background()
 	store, err := dolt.New(ctx, &dolt.Config{
 		Path:         t.TempDir(),

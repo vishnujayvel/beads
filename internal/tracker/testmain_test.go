@@ -19,6 +19,10 @@ var testServerPort int
 // testSharedDB is the name of the shared database for branch-per-test isolation.
 var testSharedDB string
 
+// trackerDoltRecoveryErr latches a failed container replacement so the rest of
+// the package fails fast instead of retrying a 60s container start per test.
+var trackerDoltRecoveryErr error
+
 // testSharedConn is a raw *sql.DB for branch operations in the shared database.
 var testSharedConn *sql.DB
 
@@ -32,21 +36,14 @@ func testMainInner(m *testing.M) int {
 		fmt.Fprintf(os.Stderr, "WARN: %v, skipping Dolt tests\n", err)
 	} else {
 		defer testutil.TerminateDoltContainer()
-		testServerPort = testutil.DoltContainerPortInt()
+		defer func() {
+			if testSharedConn != nil {
+				testSharedConn.Close()
+			}
+		}()
 
-		// Set up shared database for branch-per-test isolation
-		testSharedDB = "tracker_pkg_shared"
-		db, err := testutil.SetupSharedTestDB(testServerPort, testSharedDB)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "FATAL: shared DB setup failed: %v\n", err)
-			return 1
-		}
-		testSharedConn = db
-		defer db.Close()
-
-		// Create schema + config on the shared DB and commit to main
-		if err := initTrackerSharedSchema(testServerPort); err != nil {
-			fmt.Fprintf(os.Stderr, "FATAL: shared schema init failed: %v\n", err)
+		if err := setupTrackerShared(); err != nil {
+			fmt.Fprintf(os.Stderr, "FATAL: %v\n", err)
 			return 1
 		}
 	}
@@ -56,6 +53,56 @@ func testMainInner(m *testing.M) int {
 	os.Unsetenv("BEADS_DOLT_PORT")
 	os.Unsetenv("BEADS_TEST_MODE")
 	return code
+}
+
+// setupTrackerShared points the package globals at the current shared Dolt
+// container and creates the shared database for branch-per-test isolation,
+// with schema and config committed to main. It runs from TestMain and again
+// whenever the container has to be replaced.
+func setupTrackerShared() error {
+	testServerPort = testutil.DoltContainerPortInt()
+	testSharedDB = "tracker_pkg_shared"
+	db, err := testutil.SetupSharedTestDB(testServerPort, testSharedDB)
+	if err != nil {
+		return fmt.Errorf("shared DB setup failed: %w", err)
+	}
+	testSharedConn = db
+	if err := initTrackerSharedSchema(testServerPort); err != nil {
+		return fmt.Errorf("shared schema init failed: %w", err)
+	}
+	return nil
+}
+
+// requireHealthyTrackerDolt makes sure the shared Dolt container still serves
+// SQL before a test opens a store on it. In CI the container has been seen to
+// drop every connection mid-suite ("unexpected EOF", then "invalid connection"),
+// which used to fail every remaining test at 0.00s. When that happens, replace
+// the container and rebuild the shared database so only the test that was in
+// flight when it died is lost. Tests in this package run serially, which this
+// relies on. The replacement is announced on stderr (with the dead container's
+// state and logs) so the underlying crash stays visible even when tests pass.
+func requireHealthyTrackerDolt(t *testing.T) {
+	t.Helper()
+	if trackerDoltRecoveryErr != nil {
+		t.Fatalf("shared Dolt container could not be replaced earlier: %v", trackerDoltRecoveryErr)
+	}
+	if testutil.DoltServerReachable() {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "WARN: %s: shared Dolt container unreachable (%v); replacing it\n",
+		t.Name(), testutil.DoltContainerCrashError())
+	if testSharedConn != nil {
+		_ = testSharedConn.Close()
+		testSharedConn = nil
+	}
+	if err := testutil.RestartDoltContainer(); err != nil {
+		trackerDoltRecoveryErr = fmt.Errorf("restarting container: %w", err)
+		t.Fatalf("%v", trackerDoltRecoveryErr)
+	}
+	if err := setupTrackerShared(); err != nil {
+		trackerDoltRecoveryErr = fmt.Errorf("rebuilding shared database: %w", err)
+		t.Fatalf("%v", trackerDoltRecoveryErr)
+	}
 }
 
 func initTrackerSharedSchema(port int) error {

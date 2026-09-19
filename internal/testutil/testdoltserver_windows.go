@@ -44,3 +44,17 @@ func DoltContainerCrashed() bool { return false }
 
 // DoltContainerCrashError always returns nil on Windows (no container to monitor).
 func DoltContainerCrashError() error { return nil }
+
+// DoltServerReachable always returns false on Windows (no container); callers
+// are expected to have skipped already because no shared server was started.
+func DoltServerReachable() bool { return false }
+
+// RestartDoltContainer is not supported on Windows CI.
+func RestartDoltContainer() error {
+	return fmt.Errorf("Docker not available on Windows CI")
+}
+
+// KillDoltContainer is not supported on Windows CI.
+func KillDoltContainer() error {
+	return fmt.Errorf("Docker not available on Windows CI")
+}
