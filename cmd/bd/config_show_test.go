@@ -283,6 +283,8 @@ func TestCollectViperEntriesWithEnvOverride(t *testing.T) {
 	}
 	defer os.Chdir(origDir) //nolint:errcheck
 
+	// An ambient BEADS_ACTOR would outrank BD_ACTOR (GH#4645) and change the reported source.
+	t.Setenv("BEADS_ACTOR", "")
 	t.Setenv("BD_ACTOR", "env-bot")
 	t.Setenv("BEADS_TEST_IGNORE_REPO_CONFIG", "1")
 	config.ResetForTesting()

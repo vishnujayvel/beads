@@ -70,6 +70,11 @@ func TestPrepareSelectedCommandContext_RebindsTargetConfig(t *testing.T) {
 	}
 
 	t.Setenv("BEADS_DIR", callerBeadsDir)
+	// BEADS_ACTOR (and the deprecated BD_ACTOR alias) outrank config.yaml by
+	// design (GH#4645); clear them so an ambient value cannot mask the target
+	// workspace's actor.
+	t.Setenv("BEADS_ACTOR", "")
+	t.Setenv("BD_ACTOR", "")
 	config.ResetForTesting()
 	t.Cleanup(config.ResetForTesting)
 	if err := config.Initialize(); err != nil {
@@ -146,6 +151,11 @@ func TestPrepareSelectedCommandContext_DoesNotMergeCallerConfigForUnsetKeys(t *t
 
 	t.Chdir(callerDir)
 	t.Setenv("BEADS_DIR", callerBeadsDir)
+	// BEADS_ACTOR (and the deprecated BD_ACTOR alias) outrank config.yaml by
+	// design (GH#4645); clear them so an ambient value cannot mask the target
+	// workspace's actor.
+	t.Setenv("BEADS_ACTOR", "")
+	t.Setenv("BD_ACTOR", "")
 	config.ResetForTesting()
 	t.Cleanup(config.ResetForTesting)
 	if err := config.Initialize(); err != nil {
