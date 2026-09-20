@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -1765,5 +1766,57 @@ func TestFinalizeSyncedBootstrapSharedServerSetsServerMode(t *testing.T) {
 	}
 	if loaded.GetDoltMode() != configfile.DoltModeServer {
 		t.Errorf("dolt_mode = %q, want %q — shared server should set server mode", loaded.GetDoltMode(), configfile.DoltModeServer)
+	}
+}
+
+// TestFindParentConfigStopsAtOSTempRoot guards GH#6603: a .beads sitting
+// directly at os.TempDir() must never be adopted as an ancestor config, or
+// every mktemp-style fixture nested beneath it aliases into one shared store.
+func TestFindParentConfigStopsAtOSTempRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("TMPDIR override is not honored by os.TempDir() on Windows")
+	}
+	physRoot := t.TempDir()
+	// Point TMPDIR at a symlink to the real root (mirroring macOS
+	// /var/folders -> /private/var/folders) so the ceiling must match across
+	// both spellings.
+	linkRoot := filepath.Join(t.TempDir(), "tmproot-link")
+	if err := os.Symlink(physRoot, linkRoot); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	t.Setenv("TMPDIR", linkRoot)
+
+	tempRootBeads := filepath.Join(physRoot, ".beads")
+	if err := os.MkdirAll(tempRootBeads, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tempRootBeads, "metadata.json"), []byte(`{"dolt_database":"rta"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, store := range []string{"store-a", "store-b"} {
+		for _, root := range []string{physRoot, linkRoot} {
+			beadsDir := filepath.Join(root, store, ".beads")
+			cfg, err := findParentConfig(beadsDir)
+			if err != nil {
+				t.Fatalf("findParentConfig(%s): %v", beadsDir, err)
+			}
+			if cfg != nil {
+				t.Fatalf("findParentConfig(%s) adopted the OS temp root's config (dolt_database=%q)", beadsDir, cfg.GetDoltDatabase())
+			}
+		}
+	}
+
+	// A workspace nested below the temp root is still discovered.
+	wsBeads := filepath.Join(physRoot, "ws", ".beads")
+	if err := os.MkdirAll(wsBeads, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wsBeads, "metadata.json"), []byte(`{"dolt_database":"ws"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := findParentConfig(filepath.Join(physRoot, "ws", "rig", ".beads"))
+	if err != nil || cfg == nil || cfg.GetDoltDatabase() != "ws" {
+		t.Fatalf("nested workspace config not found: cfg=%v err=%v", cfg, err)
 	}
 }

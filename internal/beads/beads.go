@@ -631,6 +631,10 @@ func FindBeadsDirFrom(startDir string) string {
 	}
 
 	for dir := startDir; dir != "/" && dir != "."; {
+		// Never adopt a .beads inherited from the OS temp root (GH#6603).
+		if dir != startDir && IsOSTempRoot(dir) {
+			break
+		}
 		beadsDir := filepath.Join(dir, ".beads")
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
 			resolved := FollowRedirect(beadsDir)
@@ -828,6 +832,11 @@ func FindBeadsDir() string {
 			break
 		}
 
+		// Never adopt a .beads inherited from the OS temp root (GH#6603).
+		if dir != cwdCanonical && IsOSTempRoot(dir) {
+			break
+		}
+
 		beadsDir := filepath.Join(dir, ".beads")
 		if info, err := os.Stat(beadsDir); err == nil && info.IsDir() {
 			beadsDir = FollowRedirect(beadsDir)
@@ -998,6 +1007,15 @@ type DatabaseInfo struct {
 	Path       string // Full path to the .db file
 	BeadsDir   string // Parent .beads directory
 	IssueCount int    // Number of issues (-1 if unknown)
+}
+
+// IsOSTempRoot reports whether dir is the OS temp directory itself
+// (os.TempDir(), e.g. macOS /var/folders/.../T), comparing symlink-resolved
+// forms so /var/folders and /private/var/folders match. A .beads sitting
+// directly at the temp root is never a real project: every mktemp-style
+// fixture nests beneath it, so ancestor discovery must not adopt it (GH#6603).
+func IsOSTempRoot(dir string) bool {
+	return utils.PathsEqual(dir, os.TempDir())
 }
 
 // findGitRoot returns the root directory of the current git repository,

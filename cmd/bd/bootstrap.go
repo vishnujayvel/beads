@@ -1312,6 +1312,12 @@ func findParentConfig(beadsDir string) (*configfile.Config, error) {
 	homeDir, _ := os.UserHomeDir()
 
 	for dir := start; dir != "/" && dir != "."; {
+		// Don't adopt a .beads at the OS temp root: mktemp-style fixtures nest
+		// beneath it and would all alias into one shared store (GH#6603).
+		if beads.IsOSTempRoot(dir) {
+			break
+		}
+
 		candidate := filepath.Join(dir, ".beads")
 		cfg, err := configfile.LoadForDiscovery(candidate)
 		if err != nil {
