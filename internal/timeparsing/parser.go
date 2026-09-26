@@ -183,5 +183,5 @@ func ParseRelativeTime(s string, now time.Time) (time.Time, error) {
 		return t.UTC(), nil
 	}
 
-	return time.Time{}, fmt.Errorf("cannot parse time expression: %q (examples: +6h, tomorrow, 2025-01-15)", s)
+	return time.Time{}, fmt.Errorf("cannot parse time expression: %q (examples: +30min, +6h, tomorrow, 2025-01-15)", s)
 }

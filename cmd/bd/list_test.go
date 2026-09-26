@@ -1355,8 +1355,12 @@ func TestParseTimeFlag_MinutesVsMonths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseTimeFlag(+30m) error: %v", err)
 	}
-	if d := time.Until(months); d < 365*24*time.Hour {
-		t.Errorf("+30m resolved %v from now, want ~30 months", d)
+	// Bound the months arm on both sides against a computed expectation: a
+	// one-sided "more than a year out" check stays green if "m" regressed to
+	// years or decades, which is the exact discrimination this test exists for.
+	wantMonths := time.Now().AddDate(0, 30, 0)
+	if d := months.Sub(wantMonths); d < -time.Minute || d > time.Minute {
+		t.Errorf("+30m resolved %v, want ~%v (30 months out)", months, wantMonths)
 	}
 }
 
